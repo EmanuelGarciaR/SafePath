@@ -3,12 +3,18 @@ SafePath - Optimizador de Rutas (Backend)
 """
 import json
 from pathlib import Path
+import math
 from typing import Tuple, List, Dict, Optional
 
 import networkx as nx
 import numpy as np
 import pandas as pd
 from shapely import wkt
+try:
+    from rtree import index as rtree_index
+    RTREE_AVAILABLE = True
+except Exception:
+    RTREE_AVAILABLE = False
 
 
 class SafePathRouter:
@@ -47,7 +53,17 @@ class SafePathRouter:
         # Crear el grafo dirigido (calles con dirección)
         self.G = nx.DiGraph()
 
+        # Índices espaciales y aceleradores
+        self._nodes_list = []  # type: ignore[var-annotated]
+        self._node_to_id = {}
+        self._id_to_node = {}
+        self._node_rtree = None
+        self._edge_rtree = None
+        self._edge_bounds = {}
+        self._min_combined_ratio = 0.0  # costo_comb/meters (límite inferior)
+
         self._build_graph()
+        self._build_spatial_indexes()
 
         print(
             f"✓ Grafo construido: {self.G.number_of_nodes()} nodos, {self.G.number_of_edges()} aristas"
@@ -66,6 +82,7 @@ class SafePathRouter:
     def _build_graph(self):
         print("Construyendo grafo de calles...")
 
+        min_combined_ratio = float("inf")
         for idx, row in self.df.iterrows():
             origin = self._parse_coordinate(row["origin"])
             destination = self._parse_coordinate(row["destination"])
@@ -102,15 +119,133 @@ class SafePathRouter:
             if (idx + 1) % 10000 == 0:
                 print(f"  Procesadas {idx + 1}/{len(self.df)} aristas...")
 
+            # Preparar bounds por arista para filtrado espacial
+            try:
+                minx, miny, maxx, maxy = row["geometry"].bounds
+            except Exception:
+                # Fallback a bbox simple con extremos de origen/destino
+                xs = [origin[0], destination[0]]
+                ys = [origin[1], destination[1]]
+                minx, maxx = min(xs), max(xs)
+                miny, maxy = min(ys), max(ys)
+            self._edge_bounds[idx] = (minx, miny, maxx, maxy)
+
+            # Calcular razón mínima combinada por metro (para heurística A*)
+            length = float(row.get("length", 0) or 0)
+            combined = float(row.get("combined_cost", 0) or 0)
+            if length > 0:
+                ratio = combined / length
+                if ratio > 0 and ratio < min_combined_ratio:
+                    min_combined_ratio = ratio
+
+        self._min_combined_ratio = 0.0 if min_combined_ratio == float("inf") else min_combined_ratio
+
+        # Capturar listado de nodos para índice espacial
+        self._nodes_list = list(self.G.nodes())
+        for i, n in enumerate(self._nodes_list):
+            self._node_to_id[n] = i
+            self._id_to_node[i] = n
+
+    def _build_spatial_indexes(self):
+        """Construye índices espaciales para nodos y aristas si RTree está disponible."""
+        if RTREE_AVAILABLE:
+            # Índice para nodos
+            p = rtree_index.Property()
+            p.buffering_capacity = 8_192
+            self._node_rtree = rtree_index.Index(properties=p)
+            for i, (lon, lat) in enumerate(self._nodes_list):
+                self._node_rtree.insert(i, (lon, lat, lon, lat))
+
+            # Índice para aristas (por fila del DataFrame)
+            p2 = rtree_index.Property()
+            p2.buffering_capacity = 8_192
+            self._edge_rtree = rtree_index.Index(properties=p2)
+            for row_idx, bbox in self._edge_bounds.items():
+                self._edge_rtree.insert(int(row_idx), bbox)
+        else:
+            print("(Aviso) RTree no disponible: se usarán búsquedas lineales (más lentas)")
+
     def find_nearest_node(self, lon: float, lat: float) -> Tuple[float, float]:
+        """Encuentra el nodo más cercano usando RTree si está disponible (fallback lineal)."""
+        if self._node_rtree is not None:
+            # Buscar el id más cercano y validar distancia exacta
+            try:
+                nearest_ids = list(self._node_rtree.nearest((lon, lat, lon, lat), 5))
+            except Exception:
+                nearest_ids = []
+            best = None
+            best_d = float("inf")
+            for nid in nearest_ids:
+                n = self._id_to_node.get(int(nid))
+                if not n:
+                    continue
+                d = (n[0] - lon) ** 2 + (n[1] - lat) ** 2
+                if d < best_d:
+                    best_d = d
+                    best = n
+            if best is not None:
+                return best
+
+        # Fallback lineal
         min_dist = float("inf")
         nearest = None
-        for node in self.G.nodes():
-            dist = np.sqrt((node[0] - lon) ** 2 + (node[1] - lat) ** 2)
+        for node in self._nodes_list:
+            dist = (node[0] - lon) ** 2 + (node[1] - lat) ** 2
             if dist < min_dist:
                 min_dist = dist
                 nearest = node
         return nearest
+
+    def _degrees_buffer(self, meters: float, lat_ref: float) -> Tuple[float, float]:
+        """Convierte un buffer en metros a grados (dx, dy) aproximados."""
+        dy = meters / 111_000.0
+        dx = meters / (111_000.0 * max(0.1, math.cos(math.radians(lat_ref))))
+        return dx, dy
+
+    def _edges_in_bbox(self, bbox: Tuple[float, float, float, float]) -> List[int]:
+        """Devuelve índices de filas (aristas) cuyo bbox intersecta el bbox dado."""
+        minx, miny, maxx, maxy = bbox
+        if self._edge_rtree is not None:
+            return list(self._edge_rtree.intersection((minx, miny, maxx, maxy)))
+        # Fallback lineal
+        out = []
+        for ridx, (ex1, ey1, ex2, ey2) in self._edge_bounds.items():
+            if not (ex2 < minx or ex1 > maxx or ey2 < miny or ey1 > maxy):
+                out.append(int(ridx))
+        return out
+
+    def _build_temp_graph_for_bbox(self, bbox: Tuple[float, float, float, float]) -> nx.DiGraph:
+        """Construye un grafo temporal con solo aristas que intersectan el bbox dado."""
+        Gt = nx.DiGraph()
+        candidate_rows = self._edges_in_bbox(bbox)
+        if not candidate_rows:
+            return Gt
+        # Añadir aristas candidatas
+        for ridx in candidate_rows:
+            row = self.df.iloc[int(ridx)]
+            origin = self._parse_coordinate(row["origin"])
+            destination = self._parse_coordinate(row["destination"])
+            Gt.add_node(origin, pos=origin)
+            Gt.add_node(destination, pos=destination)
+            Gt.add_edge(
+                origin,
+                destination,
+                name=row["name"],
+                length=row["length"],
+                oneway=row["oneway"],
+                geometry=row["geometry"],
+                harassmentRisk=row["harassmentRisk"],
+                cameras_count=row["cameras_count"],
+                incidents_count=row["incidents_count"],
+                incidents_severity=row["incidents_severity"],
+                risk_score=row["risk_score"],
+                combined_cost=row["combined_cost"],
+                weight_distance=row["length"],
+                weight_risk=row["risk_score"],
+                weight_combined=row["combined_cost"],
+                weight_incidents=(row["incidents_count"] if not pd.isna(row["incidents_count"]) else 0.0),
+            )
+        return Gt
 
     def calculate_route(
         self,
@@ -140,35 +275,83 @@ class SafePathRouter:
         weight_attr = opt_map.get(optimization, f"weight_{optimization}")
 
         try:
-            if algorithm == "dijkstra":
-                path = nx.dijkstra_path(self.G, start_node, end_node, weight=weight_attr)
-                cost = nx.dijkstra_path_length(
-                    self.G, start_node, end_node, weight=weight_attr
-                )
-            elif algorithm == "astar":
-                def heuristic(node1, node2):
-                    return (
-                        np.sqrt((node1[0] - node2[0]) ** 2 + (node1[1] - node2[1]) ** 2)
-                        * 111000
-                    )
+            # Subgrafo por corredor (acota la búsqueda)
+            # bbox entre origen y destino ampliado por margen en metros
+            minx = min(start_node[0], end_node[0])
+            maxx = max(start_node[0], end_node[0])
+            miny = min(start_node[1], end_node[1])
+            maxy = max(start_node[1], end_node[1])
+            straight_m = math.sqrt((end_node[0]-start_node[0])**2 + (end_node[1]-start_node[1])**2) * 111_000
+            margin_m = max(300.0, straight_m * 0.25)
+            dx, dy = self._degrees_buffer(margin_m, (start_node[1]+end_node[1])/2.0)
 
-                path = nx.astar_path(
-                    self.G, start_node, end_node, heuristic=heuristic, weight=weight_attr
-                )
-                cost = nx.astar_path_length(
-                    self.G, start_node, end_node, heuristic=heuristic, weight=weight_attr
-                )
-            elif algorithm == "bellman_ford":
-                path = nx.bellman_ford_path(
-                    self.G, start_node, end_node, weight=weight_attr
-                )
-                cost = nx.bellman_ford_path_length(
-                    self.G, start_node, end_node, weight=weight_attr
-                )
-            else:
-                raise ValueError(f"Algoritmo '{algorithm}' no reconocido")
+            attempt = 0
+            path = None
+            cost = None
+            G_used = None
+            while attempt < 3 and path is None:
+                bbox = (minx-dx, miny-dy, maxx+dx, maxy+dy)
+                Gc = self._build_temp_graph_for_bbox(bbox)
 
-            stats = self._calculate_route_stats(path)
+                # Asegurar presencia de nodos; si faltan, expandir margen
+                if (start_node not in Gc) or (end_node not in Gc):
+                    attempt += 1
+                    dx *= 1.5
+                    dy *= 1.5
+                    continue
+
+                # Heurística admisible
+                def h(n1, n2):
+                    # metros en línea recta
+                    d = math.sqrt((n1[0]-n2[0])**2 + (n1[1]-n2[1])**2) * 111_000
+                    if weight_attr == "weight_distance":
+                        return d
+                    elif weight_attr == "weight_combined" and self._min_combined_ratio > 0:
+                        return d * self._min_combined_ratio
+                    else:
+                        return 0.0  # sin sobreestimación para otros pesos
+
+                # Elegir algoritmo
+                if algorithm == "dijkstra":
+                    path = nx.dijkstra_path(Gc, start_node, end_node, weight=weight_attr)
+                    cost = nx.dijkstra_path_length(Gc, start_node, end_node, weight=weight_attr)
+                    G_used = Gc
+                elif algorithm == "astar":
+                    path = nx.astar_path(Gc, start_node, end_node, heuristic=h, weight=weight_attr)
+                    cost = nx.astar_path_length(Gc, start_node, end_node, heuristic=h, weight=weight_attr)
+                    G_used = Gc
+                elif algorithm == "bellman_ford":
+                    path = nx.bellman_ford_path(Gc, start_node, end_node, weight=weight_attr)
+                    cost = nx.bellman_ford_path_length(Gc, start_node, end_node, weight=weight_attr)
+                    G_used = Gc
+                else:
+                    raise ValueError(f"Algoritmo '{algorithm}' no reconocido")
+
+                attempt += 1
+
+            # Si no se obtuvo ruta en subgrafo tras varios intentos, usar grafo completo como fallback
+            if path is None:
+                G_used = self.G
+                if algorithm == "dijkstra":
+                    path = nx.dijkstra_path(self.G, start_node, end_node, weight=weight_attr)
+                    cost = nx.dijkstra_path_length(self.G, start_node, end_node, weight=weight_attr)
+                elif algorithm == "astar":
+                    def h_full(n1, n2):
+                        d = math.sqrt((n1[0]-n2[0])**2 + (n1[1]-n2[1])**2) * 111_000
+                        if weight_attr == "weight_distance":
+                            return d
+                        elif weight_attr == "weight_combined" and self._min_combined_ratio > 0:
+                            return d * self._min_combined_ratio
+                        return 0.0
+                    path = nx.astar_path(self.G, start_node, end_node, heuristic=h_full, weight=weight_attr)
+                    cost = nx.astar_path_length(self.G, start_node, end_node, heuristic=h_full, weight=weight_attr)
+                elif algorithm == "bellman_ford":
+                    path = nx.bellman_ford_path(self.G, start_node, end_node, weight=weight_attr)
+                    cost = nx.bellman_ford_path_length(self.G, start_node, end_node, weight=weight_attr)
+                else:
+                    raise ValueError(f"Algoritmo '{algorithm}' no reconocido")
+
+            stats = self._calculate_route_stats(path, G_used)
 
             print(f"\n✓ Ruta encontrada!")
             print(f"  - Nodos en la ruta: {len(path)}")
@@ -184,7 +367,7 @@ class SafePathRouter:
                 "optimization": optimization,
                 "algorithm": algorithm,
                 "statistics": stats,
-                "edges": self._get_edge_details(path),
+                "edges": self._get_edge_details(path, G_used),
             }
 
         except nx.NetworkXNoPath:
@@ -194,7 +377,8 @@ class SafePathRouter:
             print(f"✗ Error al calcular ruta: {str(e)}")
             return None
 
-    def _calculate_route_stats(self, path: List[Tuple[float, float]]) -> Dict:
+    def _calculate_route_stats(self, path: List[Tuple[float, float]], Gref: Optional[nx.DiGraph] = None) -> Dict:
+        G = Gref or self.G
         total_distance = 0
         total_risk = 0
         total_cameras = 0
@@ -202,35 +386,37 @@ class SafePathRouter:
         edge_count = 0
 
         for i in range(len(path) - 1):
-            edge_data = self.G[path[i]][path[i + 1]]
+            edge_data = G[path[i]][path[i + 1]]
             total_distance += edge_data["length"]
             total_risk += edge_data["risk_score"]
             total_cameras += edge_data["cameras_count"]
             total_incidents += edge_data["incidents_count"]
             edge_count += 1
 
+        # Convertir explícitamente a tipos nativos Python para evitar numpy.*
         return {
-            "total_distance": total_distance,
-            "avg_risk": total_risk / edge_count if edge_count > 0 else 0,
+            "total_distance": float(total_distance),
+            "avg_risk": float(total_risk / edge_count if edge_count > 0 else 0.0),
             "total_cameras": int(total_cameras),
             "total_incidents": int(total_incidents),
-            "num_segments": edge_count,
+            "num_segments": int(edge_count),
         }
 
-    def _get_edge_details(self, path: List[Tuple[float, float]]) -> List[Dict]:
+    def _get_edge_details(self, path: List[Tuple[float, float]], Gref: Optional[nx.DiGraph] = None) -> List[Dict]:
+        G = Gref or self.G
         edges = []
         for i in range(len(path) - 1):
-            edge_data = self.G[path[i]][path[i + 1]]
+            edge_data = G[path[i]][path[i + 1]]
             edges.append(
                 {
-                    "from": path[i],
-                    "to": path[i + 1],
-                    "name": edge_data["name"],
-                    "length": edge_data["length"],
-                    "harassmentRisk": edge_data["harassmentRisk"],
-                    "cameras_count": edge_data["cameras_count"],
-                    "incidents_count": edge_data["incidents_count"],
-                    "risk_score": edge_data["risk_score"],
+                    "from": (float(path[i][0]), float(path[i][1])),
+                    "to": (float(path[i + 1][0]), float(path[i + 1][1])),
+                    "name": str(edge_data["name"]),
+                    "length": float(edge_data["length"]),
+                    "harassmentRisk": float(edge_data["harassmentRisk"]),
+                    "cameras_count": int(edge_data["cameras_count"]),
+                    "incidents_count": int(edge_data["incidents_count"]),
+                    "risk_score": float(edge_data["risk_score"]),
                     "geometry": edge_data["geometry"].wkt,
                 }
             )

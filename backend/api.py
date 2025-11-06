@@ -9,6 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .route_optimizer import SafePathRouter
+import math
+from typing import Any, Dict
 
 app = FastAPI(title="SafePath API", version="1.0.0")
 
@@ -64,6 +66,32 @@ async def compute_route(
 
     from shapely import wkt as _wkt
 
+    def to_float(x: Any) -> float:
+        try:
+            v = float(x)
+            return 0.0 if math.isnan(v) else v
+        except Exception:
+            return 0.0
+
+    def to_int(x: Any) -> int:
+        try:
+            if x is None:
+                return 0
+            # Detect NaN
+            try:
+                v = float(x)
+                if math.isnan(v):
+                    return 0
+            except Exception:
+                pass
+            return int(x)
+        except Exception:
+            try:
+                v = float(x)
+                return 0 if math.isnan(v) else int(v)
+            except Exception:
+                return 0
+
     features = []
     for e in result["edges"]:
         geom = _wkt.loads(e["geometry"]).__geo_interface__
@@ -72,26 +100,36 @@ async def compute_route(
                 "type": "Feature",
                 "geometry": geom,
                 "properties": {
-                    "name": e["name"],
-                    "length": e["length"],
-                    "harassmentRisk": e["harassmentRisk"],
-                    "cameras_count": e["cameras_count"],
-                    "incidents_count": e["incidents_count"],
-                    "risk_score": e["risk_score"],
-                    "optimization": result["optimization"],
-                    "algorithm": result["algorithm"],
+                    "name": str(e["name"]),
+                    "length": to_float(e["length"]),
+                    "harassmentRisk": to_float(e["harassmentRisk"]),
+                    "cameras_count": to_int(e["cameras_count"]),
+                    "incidents_count": to_int(e["incidents_count"]),
+                    "risk_score": to_float(e["risk_score"]),
+                    "optimization": str(result["optimization"]),
+                    "algorithm": str(result["algorithm"]),
                 },
             }
         )
+
+    # Sanitizar estadísticas y costo
+    stats = result.get("statistics", {})
+    safe_stats: Dict[str, Any] = {
+        "total_distance": to_float(stats.get("total_distance", 0.0)),
+        "avg_risk": to_float(stats.get("avg_risk", 0.0)),
+        "total_cameras": to_int(stats.get("total_cameras", 0)),
+        "total_incidents": to_int(stats.get("total_incidents", 0)),
+        "num_segments": to_int(stats.get("num_segments", 0)),
+    }
 
     return {
         "type": "FeatureCollection",
         "features": features,
         "properties": {
-            "statistics": result["statistics"],
-            "cost": result["cost"],
-            "optimization": result["optimization"],
-            "algorithm": result["algorithm"],
+            "statistics": safe_stats,
+            "cost": to_float(result.get("cost", 0.0)),
+            "optimization": str(result.get("optimization", "")),
+            "algorithm": str(result.get("algorithm", "")),
         },
     }
 
