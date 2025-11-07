@@ -9,6 +9,9 @@ export const useRouting = () => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [stats, setStats] = useState(null)
+  const [performance, setPerformance] = useState(null)
+  const [cost, setCost] = useState(null)
+  const [algorithm, setAlgorithm] = useState(null)
   const [comparing, setComparing] = useState(false)
   const [comparisonResults, setComparisonResults] = useState([])
   const [visibleRoutes, setVisibleRoutes] = useState({
@@ -41,6 +44,9 @@ export const useRouting = () => {
       }
 
       setStats(data?.properties?.statistics || null)
+      setPerformance(data?.properties?.performance || null)
+      setCost(data?.properties?.cost || null)
+      setAlgorithm(data?.properties?.algorithm || algorithm)
       return data
     } catch (err) {
       setError(err.message || 'Error al calcular la ruta')
@@ -94,6 +100,9 @@ export const useRouting = () => {
     loading,
     error,
     stats,
+    performance,
+    cost,
+    algorithm,
     comparing,
     comparisonResults,
     visibleRoutes,

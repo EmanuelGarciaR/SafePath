@@ -82,23 +82,27 @@ export const RouteControls = ({
             <option value="branch_and_bound">Branch & Bound</option>
           </optgroup>
         </select>
-        <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 4, fontStyle: 'italic' }}>
+        {/* <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 4, fontStyle: 'italic' }}>
           💡 Dijkstra garantiza la ruta óptima con mejor rendimiento
-        </div>
+        </div> */}
       </div>
 
       {/* Tipo de optimización */}
       <div className="group">
-        <label className="label">🎚️ Optimización</label>
+        <label className="label">🎚️ Tipo de Optimización (qué minimizar)</label>
         <select 
           value={optimization} 
           onChange={(e) => onOptimizationChange(e.target.value)}
+          title="Define qué valor se intenta minimizar al calcular la ruta"
         >
-          <option value="distance">Distancia</option>
-          <option value="risk">Riesgo (seguridad)</option>
-          <option value="combined">Combinado</option>
-          <option value="incidents">Incidentes</option>
+          <option value="distance">📏 Distancia (metros)</option>
+          <option value="risk">🛡️ Riesgo (índice de acoso)</option>
+          <option value="combined">⚖️ Combinado (distancia + riesgo)</option>
+          <option value="incidents">🚦 Incidentes (de tránsito)</option>
         </select>
+        {/* <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 4, fontStyle: 'italic' }}>
+          💡 El "costo" es el valor total de esta métrica en la ruta encontrada
+        </div> */}
       </div>
 
       {/* Botones de acción */}

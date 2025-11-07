@@ -1,6 +1,6 @@
 ﻿import { useRef, useState } from 'react'
 import './App.css'
-import { Map, SearchInput, RouteControls, RouteStats, ComparisonPanel } from './components'
+import { Map, SearchInput, RouteControls, RouteStats, ComparisonPanel, PerformancePanel } from './components'
 import { useGeocoding, useRouting } from './hooks'
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
@@ -219,13 +219,23 @@ export default function App() {
 
           {/* Estadísticas o comparación */}
           {routing.comparing ? (
-            <ComparisonPanel
-              results={routing.comparisonResults}
-              visibleRoutes={routing.visibleRoutes}
-              onToggleVisibility={handleToggleRouteVisibility}
-            />
+            <>
+              <ComparisonPanel
+                results={routing.comparisonResults}
+                visibleRoutes={routing.visibleRoutes}
+                onToggleVisibility={handleToggleRouteVisibility}
+              />
+              <PerformancePanel
+                results={routing.comparisonResults}
+              />
+            </>
           ) : (
-            <RouteStats stats={routing.stats} />
+            <RouteStats 
+              stats={routing.stats} 
+              performance={routing.performance}
+              cost={routing.cost}
+              algorithm={routing.algorithm}
+            />
           )}
         </div>
 

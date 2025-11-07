@@ -4,6 +4,7 @@ SafePath - Algoritmos Avanzados de Ruteo (Backend)
 from typing import Tuple, List, Dict
 import heapq
 import math
+import time
 
 import networkx as nx
 import numpy as np
@@ -25,6 +26,7 @@ class AdvancedRouter(SafePathRouter):
         print(f"ALGORITMO GREEDY MEJORADO - Optimización: {optimization}")
         print(f"{'=' * 60}")
 
+        start_time = time.time()
         start_node = self.find_nearest_node(origin[0], origin[1])
         end_node = self.find_nearest_node(destination[0], destination[1])
         weight_attr = f"weight_{optimization}"
@@ -79,11 +81,15 @@ class AdvancedRouter(SafePathRouter):
             return None
 
         stats = self._calculate_route_stats(path)
+        execution_time = time.time() - start_time
+
         print("✓ Ruta Greedy encontrada!")
         print(f"  - Nodos: {len(path)}")
         print(f"  - Iteraciones: {iterations}")
         print(f"  - Distancia: {stats['total_distance']:.2f} m")
         print(f"  - Costo {optimization}: {total_cost:.4f}")
+        print(f"  - Tiempo de ejecución: {execution_time*1000:.2f} ms")
+        print(f"  - Nodos explorados: {len(visited)}")
 
         return {
             "path": path,
@@ -92,6 +98,11 @@ class AdvancedRouter(SafePathRouter):
             "algorithm": "greedy",
             "statistics": stats,
             "edges": self._get_edge_details(path),
+            "performance": {
+                "execution_time_ms": float(execution_time * 1000),
+                "nodes_explored": int(len(visited)),
+                "nodes_in_path": int(len(path)),
+            }
         }
 
     def backtracking_route(
@@ -105,6 +116,7 @@ class AdvancedRouter(SafePathRouter):
         print(f"ALGORITMO BACKTRACKING - Optimización: {optimization}")
         print(f"{'=' * 60}")
 
+        start_time = time.time()
         start_node = self.find_nearest_node(origin[0], origin[1])
         end_node = self.find_nearest_node(destination[0], destination[1])
         weight_attr = f"weight_{optimization}"
@@ -144,11 +156,14 @@ class AdvancedRouter(SafePathRouter):
             return None
 
         stats = self._calculate_route_stats(best_path)
+        execution_time = time.time() - start_time
+
         print("✓ Ruta Backtracking encontrada!")
         print(f"  - Nodos explorados: {nodes_explored[0]}")
         print(f"  - Nodos en ruta: {len(best_path)}")
         print(f"  - Distancia: {stats['total_distance']:.2f} m")
         print(f"  - Costo {optimization}: {best_cost:.4f}")
+        print(f"  - Tiempo de ejecución: {execution_time*1000:.2f} ms")
 
         return {
             "path": best_path,
@@ -157,7 +172,11 @@ class AdvancedRouter(SafePathRouter):
             "algorithm": "backtracking",
             "statistics": stats,
             "edges": self._get_edge_details(best_path),
-            "nodes_explored": nodes_explored[0],
+            "performance": {
+                "execution_time_ms": float(execution_time * 1000),
+                "nodes_explored": int(nodes_explored[0]),
+                "nodes_in_path": int(len(best_path)),
+            }
         }
 
     def branch_and_bound_route(
@@ -167,6 +186,7 @@ class AdvancedRouter(SafePathRouter):
         print(f"BRANCH AND BOUND - Optimización: {optimization}")
         print(f"{'=' * 60}")
 
+        start_time = time.time()
         start_node = self.find_nearest_node(origin[0], origin[1])
         end_node = self.find_nearest_node(destination[0], destination[1])
         weight_attr = f"weight_{optimization}"
@@ -205,11 +225,14 @@ class AdvancedRouter(SafePathRouter):
             return None
 
         stats = self._calculate_route_stats(best_path)
+        execution_time = time.time() - start_time
+
         print("✓ Ruta Branch and Bound encontrada!")
         print(f"  - Nodos explorados: {nodes_explored}")
         print(f"  - Nodos en ruta: {len(best_path)}")
         print(f"  - Distancia: {stats['total_distance']:.2f} m")
         print(f"  - Costo {optimization}: {best_cost:.4f}")
+        print(f"  - Tiempo de ejecución: {execution_time*1000:.2f} ms")
 
         return {
             "path": best_path,
@@ -218,7 +241,11 @@ class AdvancedRouter(SafePathRouter):
             "algorithm": "branch_and_bound",
             "statistics": stats,
             "edges": self._get_edge_details(best_path),
-            "nodes_explored": nodes_explored,
+            "performance": {
+                "execution_time_ms": float(execution_time * 1000),
+                "nodes_explored": int(nodes_explored),
+                "nodes_in_path": int(len(best_path)),
+            }
         }
 
     def k_shortest_paths(

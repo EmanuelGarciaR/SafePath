@@ -4,6 +4,7 @@ SafePath - Optimizador de Rutas (Backend)
 import json
 from pathlib import Path
 import math
+import time
 from typing import Tuple, List, Dict, Optional
 
 import networkx as nx
@@ -292,6 +293,10 @@ class SafePathRouter:
         }
         weight_attr = opt_map.get(optimization, f"weight_{optimization}")
 
+        # Métricas de rendimiento
+        start_time = time.time()
+        nodes_explored = 0
+
         try:
             # Subgrafo por corredor (acota la búsqueda)
             # bbox entre origen y destino ampliado por margen en metros
@@ -345,14 +350,17 @@ class SafePathRouter:
                     path = nx.dijkstra_path(Gc, start_node, end_node, weight=weight_attr)
                     cost = nx.dijkstra_path_length(Gc, start_node, end_node, weight=weight_attr)
                     G_used = Gc
+                    nodes_explored = Gc.number_of_nodes()
                 elif algorithm == "astar":
                     path = nx.astar_path(Gc, start_node, end_node, heuristic=h, weight=weight_attr)
                     cost = nx.astar_path_length(Gc, start_node, end_node, heuristic=h, weight=weight_attr)
                     G_used = Gc
+                    nodes_explored = Gc.number_of_nodes()
                 elif algorithm == "bellman_ford":
                     path = nx.bellman_ford_path(Gc, start_node, end_node, weight=weight_attr)
                     cost = nx.bellman_ford_path_length(Gc, start_node, end_node, weight=weight_attr)
                     G_used = Gc
+                    nodes_explored = Gc.number_of_nodes()
                 else:
                     raise ValueError(f"Algoritmo '{algorithm}' no reconocido")
 
@@ -361,6 +369,7 @@ class SafePathRouter:
             # Si no se obtuvo ruta en subgrafo tras varios intentos, usar grafo completo como fallback
             if path is None:
                 G_used = self.G
+                nodes_explored = self.G.number_of_nodes()
                 if algorithm == "dijkstra":
                     path = nx.dijkstra_path(self.G, start_node, end_node, weight=weight_attr)
                     cost = nx.dijkstra_path_length(self.G, start_node, end_node, weight=weight_attr)
@@ -390,6 +399,9 @@ class SafePathRouter:
 
             stats = self._calculate_route_stats(path, G_used)
 
+            # Calcular tiempo de ejecución
+            execution_time = time.time() - start_time
+
             print(f"\n✓ Ruta encontrada!")
             print(f"  - Nodos en la ruta: {len(path)}")
             print(f"  - Distancia total: {stats['total_distance']:.2f} metros")
@@ -397,6 +409,8 @@ class SafePathRouter:
             print(f"  - Cámaras en ruta: {stats['total_cameras']}")
             print(f"  - Incidentes en ruta: {stats['total_incidents']}")
             print(f"  - Costo {optimization}: {cost:.4f}")
+            print(f"  - Tiempo de ejecución: {execution_time*1000:.2f} ms")
+            print(f"  - Nodos explorados: {nodes_explored}")
 
             return {
                 "path": path,
@@ -405,6 +419,11 @@ class SafePathRouter:
                 "algorithm": algorithm,
                 "statistics": stats,
                 "edges": self._get_edge_details(path, G_used),
+                "performance": {
+                    "execution_time_ms": float(execution_time * 1000),
+                    "nodes_explored": int(nodes_explored),
+                    "nodes_in_path": int(len(path)),
+                }
             }
 
         except nx.NetworkXNoPath:

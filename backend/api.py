@@ -151,6 +151,7 @@ async def compare_routes(
                     })
                 
                 stats = result.get("statistics", {})
+                perf = result.get("performance", {})
                 results.append({
                     "algorithm": algo,
                     "features": features,
@@ -160,6 +161,11 @@ async def compare_routes(
                         "total_cameras": to_int(stats.get("total_cameras", 0)),
                         "total_incidents": to_int(stats.get("total_incidents", 0)),
                         "num_segments": to_int(stats.get("num_segments", 0)),
+                    },
+                    "performance": {
+                        "execution_time_ms": to_float(perf.get("execution_time_ms", 0.0)),
+                        "nodes_explored": to_int(perf.get("nodes_explored", 0)),
+                        "nodes_in_path": to_int(perf.get("nodes_in_path", 0)),
                     },
                     "cost": to_float(result.get("cost", 0.0)),
                     "note": result.get("note", ""),
@@ -277,6 +283,7 @@ async def compute_route(
 
     # Sanitizar estadísticas y costo
     stats = result.get("statistics", {})
+    perf = result.get("performance", {})
     safe_stats: Dict[str, Any] = {
         "total_distance": to_float(stats.get("total_distance", 0.0)),
         "avg_risk": to_float(stats.get("avg_risk", 0.0)),
@@ -284,12 +291,18 @@ async def compute_route(
         "total_incidents": to_int(stats.get("total_incidents", 0)),
         "num_segments": to_int(stats.get("num_segments", 0)),
     }
+    safe_perf: Dict[str, Any] = {
+        "execution_time_ms": to_float(perf.get("execution_time_ms", 0.0)),
+        "nodes_explored": to_int(perf.get("nodes_explored", 0)),
+        "nodes_in_path": to_int(perf.get("nodes_in_path", 0)),
+    }
 
     return {
         "type": "FeatureCollection",
         "features": features,
         "properties": {
             "statistics": safe_stats,
+            "performance": safe_perf,
             "cost": to_float(result.get("cost", 0.0)),
             "optimization": str(result.get("optimization", "")),
             "algorithm": str(result.get("algorithm", "")),

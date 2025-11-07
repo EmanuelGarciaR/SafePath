@@ -86,13 +86,15 @@ export const ComparisonPanel = ({ results, visibleRoutes, onToggleVisibility }) 
             </div>
             
             <div style={{ fontSize: 12, lineHeight: 1.6, color: 'var(--muted)' }}>
-              <div>📏 {(route.statistics.total_distance / 1000).toFixed(2)} km</div>
-              <div>🛡️ Riesgo: {route.statistics.avg_risk.toFixed(3)}</div>
+              <div>📏 Distancia: {(route.statistics.total_distance / 1000).toFixed(2)} km ({route.statistics.num_segments} segmentos)</div>
+              <div>🛡️ Riesgo: {isNaN(route.statistics.avg_risk) ? 'N/A' : route.statistics.avg_risk.toFixed(4)}</div>
               <div>
                 📹 {route.statistics.total_cameras} cámaras · 
                 🚦 {route.statistics.total_incidents} incidentes
               </div>
-              <div>💰 Costo: {route.cost.toFixed(2)}</div>
+              <div style={{ marginTop: 4, paddingTop: 4, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                💰 Costo: <strong>{route.cost.toFixed(2)}</strong>
+              </div>
             </div>
           </div>
         )
