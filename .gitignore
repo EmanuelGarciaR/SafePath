@@ -23,12 +23,28 @@ pids
 Thumbs.db
 
 # IDEs
-.vscode/
-.idea/
 *.swp
 *.swo
 
-# Build
-/dist/
-/build/
-/out/
+# Build (en cualquier nivel)
+dist/
+build/
+out/
+coverage/
+
+# Lint / caches
+.eslintcache
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Frontend estático: config local (contiene token)
+front-static/env.local.js

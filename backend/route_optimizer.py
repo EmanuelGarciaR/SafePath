@@ -61,6 +61,8 @@ class SafePathRouter:
         self._edge_rtree = None
         self._edge_bounds = {}
         self._min_combined_ratio = 0.0  # costo_comb/meters (límite inferior)
+        self._min_risk_ratio = 0.0      # risk_score/meters (límite inferior)
+        self._min_incident_ratio = 0.0  # incidents_count/meters (límite inferior)
 
         self._build_graph()
         self._build_spatial_indexes()
@@ -83,6 +85,8 @@ class SafePathRouter:
         print("Construyendo grafo de calles...")
 
         min_combined_ratio = float("inf")
+        min_risk_ratio = float("inf")
+        min_inc_ratio = float("inf")
         for idx, row in self.df.iterrows():
             origin = self._parse_coordinate(row["origin"])
             destination = self._parse_coordinate(row["destination"])
@@ -130,15 +134,29 @@ class SafePathRouter:
                 miny, maxy = min(ys), max(ys)
             self._edge_bounds[idx] = (minx, miny, maxx, maxy)
 
-            # Calcular razón mínima combinada por metro (para heurística A*)
+            # Calcular razones mínimas por metro (para heurística A*)
             length = float(row.get("length", 0) or 0)
             combined = float(row.get("combined_cost", 0) or 0)
+            risk_score = float(row.get("risk_score", 0) or 0)
+            incidents_cnt = row.get("incidents_count", 0)
+            try:
+                incidents_cnt = float(incidents_cnt)
+            except Exception:
+                incidents_cnt = 0.0
             if length > 0:
                 ratio = combined / length
                 if ratio > 0 and ratio < min_combined_ratio:
                     min_combined_ratio = ratio
+                r_ratio = risk_score / length
+                if r_ratio > 0 and r_ratio < min_risk_ratio:
+                    min_risk_ratio = r_ratio
+                i_ratio = incidents_cnt / length
+                if i_ratio > 0 and i_ratio < min_inc_ratio:
+                    min_inc_ratio = i_ratio
 
         self._min_combined_ratio = 0.0 if min_combined_ratio == float("inf") else min_combined_ratio
+        self._min_risk_ratio = 0.0 if min_risk_ratio == float("inf") else min_risk_ratio
+        self._min_incident_ratio = 0.0 if min_inc_ratio == float("inf") else min_inc_ratio
 
         # Capturar listado de nodos para índice espacial
         self._nodes_list = list(self.G.nodes())
@@ -300,7 +318,7 @@ class SafePathRouter:
                     dy *= 1.5
                     continue
 
-                # Heurística admisible
+                # Heurística admisible mejorada (data-driven)
                 def h(n1, n2):
                     # metros en línea recta
                     d = math.sqrt((n1[0]-n2[0])**2 + (n1[1]-n2[1])**2) * 111_000
@@ -308,8 +326,19 @@ class SafePathRouter:
                         return d
                     elif weight_attr == "weight_combined" and self._min_combined_ratio > 0:
                         return d * self._min_combined_ratio
+                    elif weight_attr == "weight_risk":
+                        # Usar razón mínima observada (riesgo/meters) como cota inferior
+                        if self._min_risk_ratio > 0:
+                            return d * self._min_risk_ratio
+                        # Fallback conservador si no hay dato
+                        return d * 0.0001
+                    elif weight_attr == "weight_incidents":
+                        if self._min_incident_ratio > 0:
+                            return d * self._min_incident_ratio
+                        # Fallback muy pequeño
+                        return d * 0.00001
                     else:
-                        return 0.0  # sin sobreestimación para otros pesos
+                        return 0.0
 
                 # Elegir algoritmo
                 if algorithm == "dijkstra":
@@ -342,6 +371,14 @@ class SafePathRouter:
                             return d
                         elif weight_attr == "weight_combined" and self._min_combined_ratio > 0:
                             return d * self._min_combined_ratio
+                        elif weight_attr == "weight_risk":
+                            if self._min_risk_ratio > 0:
+                                return d * self._min_risk_ratio
+                            return d * 0.0001
+                        elif weight_attr == "weight_incidents":
+                            if self._min_incident_ratio > 0:
+                                return d * self._min_incident_ratio
+                            return d * 0.00001
                         return 0.0
                     path = nx.astar_path(self.G, start_node, end_node, heuristic=h_full, weight=weight_attr)
                     cost = nx.astar_path_length(self.G, start_node, end_node, heuristic=h_full, weight=weight_attr)

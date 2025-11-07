@@ -1,0 +1,714 @@
+﻿import {useEffect, useRef, useState} from 'react'
+import maplibregl from 'maplibre-gl'
+import './App.css'
+
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+
+export default function App(){
+  const mapContainerRef = useRef(null)
+  const mapRef = useRef(null)
+  const originMarkerRef = useRef(null)
+  const destMarkerRef = useRef(null)
+
+  const [origin, setOrigin] = useState({lon: -75.5657, lat: 6.2080})
+  const [dest, setDest] = useState({lon: -75.5676, lat: 6.2528})
+  const [originSearch, setOriginSearch] = useState('')
+  const [destSearch, setDestSearch] = useState('')
+  const [searchResults, setSearchResults] = useState({origin: [], dest: []})
+  const [optimization, setOptimization] = useState('combined')
+  const [algorithm, setAlgorithm] = useState('astar')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [stats, setStats] = useState(null)
+  const [comparing, setComparing] = useState(false)
+  const [comparisonResults, setComparisonResults] = useState([])
+  const [visibleRoutes, setVisibleRoutes] = useState({
+    'astar': true,
+    'greedy': true,
+    'dijkstra': true
+  })
+
+  useEffect(() => {
+    if (mapRef.current) return
+    
+    // Small delay to ensure container has dimensions
+    const timer = setTimeout(() => {
+      console.log('Initializing map...')
+      console.log('Container:', mapContainerRef.current)
+      console.log('Container size:', mapContainerRef.current?.offsetWidth, 'x', mapContainerRef.current?.offsetHeight)
+      
+      const map = new maplibregl.Map({
+        container: mapContainerRef.current,
+        style: {
+          version: 8,
+          glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+          sources: {
+            osm: {
+              type: 'raster',
+              tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+              tileSize: 256,
+              attribution: '&copy; OpenStreetMap contributors'
+            }
+          },
+          layers: [
+            {
+              id: 'background',
+              type: 'background',
+              paint: {
+                'background-color': '#0a0e1a'
+              }
+            },
+            {
+              id: 'osm',
+              type: 'raster',
+              source: 'osm',
+              paint: {
+                'raster-opacity': 0.6,
+                'raster-brightness-min': 0.3,
+                'raster-brightness-max': 0.7,
+                'raster-contrast': 0.2,
+                'raster-saturation': -0.3
+              }
+            }
+          ]
+        },
+        center: [-75.57, 6.24],
+        zoom: 12
+      })
+      
+      map.addControl(new maplibregl.NavigationControl({visualizePitch: true}), 'top-right')
+      mapRef.current = map
+
+      map.on('load', () => {
+        console.log('✅ Map loaded!')
+        
+        // Add single route source and layers
+        map.addSource('route', { 
+          type: 'geojson', 
+          data: { type:'FeatureCollection', features: [] } 
+        })
+        
+        map.addLayer({
+          id: 'route-glow',
+          type: 'line',
+          source: 'route',
+          paint: {
+            'line-color': '#a78bfa',
+            'line-width': ['interpolate', ['linear'], ['zoom'], 10, 8, 14, 16],
+            'line-opacity': 0.3,
+            'line-blur': 2
+          }
+        })
+        
+        map.addLayer({
+          id: 'route-line',
+          type: 'line',
+          source: 'route',
+          paint: {
+            'line-color': ['interpolate', ['linear'], ['zoom'], 10, '#7c3aed', 14, '#06b6d4'],
+            'line-width': ['interpolate', ['linear'], ['zoom'], 10, 4, 14, 8],
+            'line-opacity': 1
+          }
+        })
+
+        // Add comparison route sources and layers (3 algorithms max)
+        const comparisonColors = [
+          {main: '#7c3aed', glow: '#a78bfa'}, // purple (astar)
+          {main: '#10b981', glow: '#6ee7b7'}, // green (greedy)
+          {main: '#f59e0b', glow: '#fbbf24'}  // orange (dijkstra)
+        ]
+        
+        for (let i = 0; i < 3; i++) {
+          const sourceId = `compare-route-${i}`
+          const lineId = `compare-line-${i}`
+          const glowId = `compare-glow-${i}`
+          
+          map.addSource(sourceId, {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] }
+          })
+          
+          map.addLayer({
+            id: glowId,
+            type: 'line',
+            source: sourceId,
+            paint: {
+              'line-color': comparisonColors[i].glow,
+              'line-width': ['interpolate', ['linear'], ['zoom'], 10, 8, 14, 16],
+              'line-opacity': 0.25,
+              'line-blur': 2
+            }
+          })
+          
+          map.addLayer({
+            id: lineId,
+            type: 'line',
+            source: sourceId,
+            paint: {
+              'line-color': comparisonColors[i].main,
+              'line-width': ['interpolate', ['linear'], ['zoom'], 10, 4, 14, 8],
+              'line-opacity': 0.9
+            }
+          })
+        }
+
+        // Create marker elements
+        const makeMarkerEl = (bg) => {
+          const el = document.createElement('div')
+          el.style.width = '16px'
+          el.style.height = '16px'
+          el.style.borderRadius = '50%'
+          el.style.boxShadow = `0 0 0 3px rgba(255,255,255,.8) inset, 0 0 20px ${bg === '#7c3aed' ? 'rgba(124,58,237,.8)' : 'rgba(6,182,212,.8)'}`
+          el.style.background = bg
+          el.style.border = '2px solid white'
+          el.style.cursor = 'grab'
+          return el
+        }
+
+        // Origin marker
+        const originMarker = new maplibregl.Marker({
+          element: makeMarkerEl('#7c3aed'), 
+          draggable: true
+        })
+          .setLngLat([origin.lon, origin.lat])
+          .addTo(map)
+        
+        originMarker.on('dragend', () => {
+          const {lng, lat} = originMarker.getLngLat()
+          setOrigin({lon: lng, lat})
+        })
+        originMarkerRef.current = originMarker
+
+        // Destination marker
+        const destMarker = new maplibregl.Marker({
+          element: makeMarkerEl('#06b6d4'), 
+          draggable: true
+        })
+          .setLngLat([dest.lon, dest.lat])
+          .addTo(map)
+        
+        destMarker.on('dragend', () => {
+          const {lng, lat} = destMarker.getLngLat()
+          setDest({lon: lng, lat})
+        })
+        destMarkerRef.current = destMarker
+
+        // Click to set destination (Shift+click for origin)
+        map.on('click', (e) => {
+          const {lng, lat} = e.lngLat
+          if (e.originalEvent.shiftKey) {
+            setOrigin({lon: lng, lat})
+            originMarkerRef.current?.setLngLat([lng, lat])
+          } else {
+            setDest({lon: lng, lat})
+            destMarkerRef.current?.setLngLat([lng, lat])
+          }
+        })
+      })
+      
+      map.on('error', (e) => console.error('❌ Map error:', e))
+    }, 100)
+
+    return () => {
+      clearTimeout(timer)
+      if (mapRef.current) mapRef.current.remove()
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync markers when inputs change
+  useEffect(() => {
+    originMarkerRef.current?.setLngLat([origin.lon, origin.lat])
+  }, [origin])
+
+  useEffect(() => {
+    destMarkerRef.current?.setLngLat([dest.lon, dest.lat])
+  }, [dest])
+
+  // Geocoding search function
+  const searchLocation = async (query, type) => {
+    if (!query || query.length < 3) {
+      setSearchResults(prev => ({...prev, [type]: []}))
+      return
+    }
+
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?` + 
+        `q=${encodeURIComponent(query + ', Medellín, Colombia')}` +
+        `&format=json&limit=5&bounded=1` +
+        `&viewbox=-75.7,-6.1,-75.4,6.4`
+      )
+      const data = await res.json()
+      setSearchResults(prev => ({...prev, [type]: data}))
+    } catch (e) {
+      console.error('Search error:', e)
+    }
+  }
+
+  const selectPlace = (place, type) => {
+    const lon = parseFloat(place.lon)
+    const lat = parseFloat(place.lat)
+    
+    if (type === 'origin') {
+      setOrigin({lon, lat})
+      setOriginSearch(place.display_name.split(',')[0])
+      originMarkerRef.current?.setLngLat([lon, lat])
+      setSearchResults(prev => ({...prev, origin: []}))
+    } else {
+      setDest({lon, lat})
+      setDestSearch(place.display_name.split(',')[0])
+      destMarkerRef.current?.setLngLat([lon, lat])
+      setSearchResults(prev => ({...prev, dest: []}))
+    }
+
+    // Animate map to location
+    mapRef.current?.flyTo({center: [lon, lat], zoom: 15, duration: 1000})
+  }
+
+  const fetchRoute = async () => {
+    setLoading(true)
+    setError('')
+    setComparing(false)
+    setComparisonResults([])
+    
+    try {
+      const qs = new URLSearchParams({
+        origin_lon: origin.lon,
+        origin_lat: origin.lat,
+        dest_lon: dest.lon,
+        dest_lat: dest.lat,
+        optimization,
+        algorithm
+      })
+      
+      const res = await fetch(`${API_BASE}/route?${qs.toString()}`)
+      
+      if (!res.ok) {
+        const errText = await res.text()
+        throw new Error(`Error ${res.status}: ${errText.substring(0, 100)}`)
+      }
+      
+      const geojson = await res.json()
+      
+      if (!geojson.features || geojson.features.length === 0) {
+        throw new Error('No se encontró ruta entre esos puntos')
+      }
+      
+      // Check if fallback was used
+      if (geojson.properties?.note) {
+        console.warn('⚠', geojson.properties.note)
+        setError(`ℹ️ ${geojson.properties.note}`)
+      }
+      
+      // Update map
+      const map = mapRef.current
+      if (map && map.isStyleLoaded()) {
+        const src = map.getSource('route')
+        if (src) {
+          src.setData(geojson)
+          
+          // Hide comparison routes
+          for (let i = 0; i < 3; i++) {
+            const compareSrc = map.getSource(`compare-route-${i}`)
+            if (compareSrc) {
+              compareSrc.setData({ type: 'FeatureCollection', features: [] })
+            }
+          }
+          
+          // Fit bounds
+          const bounds = new maplibregl.LngLatBounds()
+          geojson.features.forEach(f => {
+            if (f.geometry?.type === 'LineString') {
+              f.geometry.coordinates.forEach(c => bounds.extend(c))
+            }
+          })
+          if (!bounds.isEmpty()) {
+            map.fitBounds(bounds, {padding: 80, duration: 800})
+          }
+        }
+      }
+      
+      // Update stats
+      setStats(geojson?.properties?.statistics || null)
+      
+    } catch (e) {
+      console.error('Route error:', e)
+      setError(e.message || 'No se pudo calcular la ruta')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const compareRoutes = async () => {
+    setLoading(true)
+    setError('')
+    setComparing(true)
+    setStats(null)
+    
+    try {
+      const algorithms = ['astar', 'greedy', 'dijkstra']
+      const qs = new URLSearchParams({
+        origin_lon: origin.lon,
+        origin_lat: origin.lat,
+        dest_lon: dest.lon,
+        dest_lat: dest.lat,
+        optimization,
+        algorithms: algorithms.join(',')
+      })
+      
+      const res = await fetch(`${API_BASE}/compare?${qs.toString()}`)
+      
+      if (!res.ok) {
+        const errText = await res.text()
+        throw new Error(`Error ${res.status}: ${errText.substring(0, 100)}`)
+      }
+      
+      const data = await res.json()
+      
+      if (!data.routes || data.routes.length === 0) {
+        throw new Error('No se encontraron rutas para comparar')
+      }
+      
+      setComparisonResults(data.routes)
+      
+      // Initialize visibility (all visible by default)
+      const visibility = {}
+      data.routes.forEach((route, i) => {
+        visibility[route.algorithm] = true
+      })
+      setVisibleRoutes(visibility)
+      
+      // Update map with all routes
+      const map = mapRef.current
+      if (map && map.isStyleLoaded()) {
+        // Clear single route
+        const routeSrc = map.getSource('route')
+        if (routeSrc) {
+          routeSrc.setData({ type: 'FeatureCollection', features: [] })
+        }
+        
+        // Add comparison routes
+        const allBounds = new maplibregl.LngLatBounds()
+        
+        data.routes.forEach((route, i) => {
+          const sourceId = `compare-route-${i}`
+          const src = map.getSource(sourceId)
+          
+          if (src && route.features) {
+            const geojson = {
+              type: 'FeatureCollection',
+              features: route.features
+            }
+            src.setData(geojson)
+            
+            // Collect bounds
+            route.features.forEach(f => {
+              if (f.geometry?.type === 'LineString') {
+                f.geometry.coordinates.forEach(c => allBounds.extend(c))
+              }
+            })
+          }
+        })
+        
+        if (!allBounds.isEmpty()) {
+          map.fitBounds(allBounds, {padding: 80, duration: 800})
+        }
+      }
+      
+    } catch (e) {
+      console.error('Comparison error:', e)
+      setError(e.message || 'No se pudo comparar las rutas')
+      setComparing(false)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const toggleRouteVisibility = (algo) => {
+    const newVisibility = {...visibleRoutes, [algo]: !visibleRoutes[algo]}
+    setVisibleRoutes(newVisibility)
+    
+    const map = mapRef.current
+    if (!map || !map.isStyleLoaded()) return
+    
+    const routeIndex = comparisonResults.findIndex(r => r.algorithm === algo)
+    if (routeIndex === -1) return
+    
+    const lineLayer = `compare-line-${routeIndex}`
+    const glowLayer = `compare-glow-${routeIndex}`
+    
+    const visibility = newVisibility[algo] ? 'visible' : 'none'
+    map.setLayoutProperty(lineLayer, 'visibility', visibility)
+    map.setLayoutProperty(glowLayer, 'visibility', visibility)
+  }
+
+  return (
+    <div className="app-root">
+      <header className="app-header">
+        <div className="brand">
+          <div className="logo-dot"/>
+          <h1>SafePath</h1>
+        </div>
+        <p className="subtitle">Rutas seguras en Medellín</p>
+      </header>
+
+      <div className="layout">
+        <aside className="controls">
+          <div className="group">
+            <label className="label">🔍 Buscar origen</label>
+            <input 
+              type="text"
+              value={originSearch}
+              onChange={e => {
+                setOriginSearch(e.target.value)
+                searchLocation(e.target.value, 'origin')
+              }}
+              placeholder="Ej: Parque Lleras, Poblado..."
+              style={{marginBottom: 8}}
+            />
+            {searchResults.origin.length > 0 && (
+              <div style={{
+                background: 'rgba(14,21,40,0.95)', 
+                border: '1px solid rgba(124,58,237,0.3)',
+                borderRadius: 8,
+                maxHeight: 150,
+                overflow: 'auto',
+                marginBottom: 8
+              }}>
+                {searchResults.origin.map((place, i) => (
+                  <div 
+                    key={i}
+                    onClick={() => selectPlace(place, 'origin')}
+                    style={{
+                      padding: '8px 12px',
+                      cursor: 'pointer',
+                      fontSize: 12,
+                      borderBottom: i < searchResults.origin.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none'
+                    }}
+                    onMouseEnter={e => e.target.style.background = 'rgba(124,58,237,0.2)'}
+                    onMouseLeave={e => e.target.style.background = 'transparent'}
+                  >
+                    📍 {place.display_name}
+                  </div>
+                ))}
+              </div>
+            )}
+            
+            <label className="label" style={{marginTop: 8}}>Coordenadas</label>
+            <div className="row">
+              <input 
+                type="number" 
+                step="0.0001" 
+                value={origin.lon} 
+                onChange={e => setOrigin(o => ({...o, lon: parseFloat(e.target.value)}))} 
+                placeholder="Longitud"
+              />
+              <input 
+                type="number" 
+                step="0.0001" 
+                value={origin.lat} 
+                onChange={e => setOrigin(o => ({...o, lat: parseFloat(e.target.value)}))} 
+                placeholder="Latitud"
+              />
+            </div>
+          </div>
+
+          <div className="group">
+            <label className="label">🔍 Buscar destino</label>
+            <input 
+              type="text"
+              value={destSearch}
+              onChange={e => {
+                setDestSearch(e.target.value)
+                searchLocation(e.target.value, 'dest')
+              }}
+              placeholder="Ej: Universidad de Antioquia..."
+              style={{marginBottom: 8}}
+            />
+            {searchResults.dest.length > 0 && (
+              <div style={{
+                background: 'rgba(14,21,40,0.95)', 
+                border: '1px solid rgba(6,182,212,0.3)',
+                borderRadius: 8,
+                maxHeight: 150,
+                overflow: 'auto',
+                marginBottom: 8
+              }}>
+                {searchResults.dest.map((place, i) => (
+                  <div 
+                    key={i}
+                    onClick={() => selectPlace(place, 'dest')}
+                    style={{
+                      padding: '8px 12px',
+                      cursor: 'pointer',
+                      fontSize: 12,
+                      borderBottom: i < searchResults.dest.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none'
+                    }}
+                    onMouseEnter={e => e.target.style.background = 'rgba(6,182,212,0.2)'}
+                    onMouseLeave={e => e.target.style.background = 'transparent'}
+                  >
+                    📍 {place.display_name}
+                  </div>
+                ))}
+              </div>
+            )}
+            
+            <label className="label" style={{marginTop: 8}}>Coordenadas</label>
+            <div className="row">
+              <input 
+                type="number" 
+                step="0.0001" 
+                value={dest.lon} 
+                onChange={e => setDest(d => ({...d, lon: parseFloat(e.target.value)}))} 
+                placeholder="Longitud"
+              />
+              <input 
+                type="number" 
+                step="0.0001" 
+                value={dest.lat} 
+                onChange={e => setDest(d => ({...d, lat: parseFloat(e.target.value)}))} 
+                placeholder="Latitud"
+              />
+            </div>
+          </div>
+
+          <div className="group">
+            <label className="label">Preferencia de ruta</label>
+            <select value={optimization} onChange={e => setOptimization(e.target.value)}>
+              <option value="combined">⚖️ Balance (distancia + riesgo)</option>
+              <option value="distance">📏 Ruta más corta</option>
+              <option value="risk">🛡️ Más segura (menor riesgo)</option>
+              <option value="incidents">🚦 Menos incidentes</option>
+            </select>
+          </div>
+
+          <div className="group">
+            <label className="label">Algoritmo</label>
+            <select value={algorithm} onChange={e => setAlgorithm(e.target.value)}>
+              <optgroup label="🚀 Algoritmos clásicos">
+                <option value="astar">⚡ A* (recomendado - rápido y óptimo)</option>
+                <option value="dijkstra">🎯 Dijkstra (garantiza óptimo global)</option>
+                <option value="bellman_ford">🔄 Bellman-Ford (detecta ciclos negativos)</option>
+              </optgroup>
+              <optgroup label="🧪 Algoritmos experimentales">
+                <option value="greedy">🌱 Greedy (más rápido, puede no ser óptimo)</option>
+                <option value="backtracking">🔙 Backtracking (explora alternativas)</option>
+                <option value="branch_and_bound">🌳 Branch & Bound (poda inteligente)</option>
+              </optgroup>
+            </select>
+          </div>
+
+          <button className="primary" onClick={fetchRoute} disabled={loading}>
+            {loading && !comparing ? '⏳ Calculando...' : '🧭 Calcular ruta'}
+          </button>
+
+          <button 
+            className="primary" 
+            onClick={compareRoutes} 
+            disabled={loading}
+            style={{
+              marginTop: 8,
+              background: 'linear-gradient(90deg, #10b981, #06b6d4)',
+              boxShadow: '0 10px 30px rgba(16,185,129,.25)'
+            }}
+          >
+            {loading && comparing ? '⏳ Comparando...' : '⚖️ Comparar algoritmos'}
+          </button>
+
+          {error && <div className="error">❌ {error}</div>}
+
+          {comparing && comparisonResults.length > 0 && (
+            <div className="group" style={{marginTop: 16, padding: 12, background: 'rgba(6,182,212,0.08)', borderRadius: 8, border: '1px solid rgba(6,182,212,0.2)'}}>
+              <label className="label">⚖️ Comparación de rutas</label>
+              
+              {comparisonResults.map((route, index) => {
+                const colors = ['#7c3aed', '#10b981', '#f59e0b']
+                const icons = {'astar': '⚡', 'greedy': '🌱', 'dijkstra': '🎯', 'bellman_ford': '🔄', 'backtracking': '🔙', 'branch_and_bound': '🌳'}
+                const isVisible = visibleRoutes[route.algorithm]
+                
+                return (
+                  <div 
+                    key={route.algorithm}
+                    style={{
+                      marginTop: 10,
+                      padding: 10,
+                      background: isVisible ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.2)',
+                      borderRadius: 6,
+                      border: `2px solid ${colors[index]}`,
+                      cursor: 'pointer',
+                      opacity: isVisible ? 1 : 0.5,
+                      transition: 'all 0.2s'
+                    }}
+                    onClick={() => toggleRouteVisibility(route.algorithm)}
+                  >
+                    <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6}}>
+                      <div style={{display: 'flex', alignItems: 'center', gap: 6}}>
+                        <div style={{
+                          width: 16,
+                          height: 16,
+                          borderRadius: '50%',
+                          background: colors[index],
+                          border: '2px solid white'
+                        }}/>
+                        <strong>{icons[route.algorithm] || '🔹'} {route.algorithm.toUpperCase()}</strong>
+                      </div>
+                      <span style={{fontSize: 11, color: '#888'}}>{isVisible ? '👁️ Visible' : '🚫 Oculta'}</span>
+                    </div>
+                    <div style={{fontSize: 12, lineHeight: 1.6, color: 'var(--muted)'}}>
+                      <div>📏 {(route.statistics.total_distance / 1000).toFixed(2)} km</div>
+                      <div>🛡️ Riesgo: {route.statistics.avg_risk.toFixed(3)}</div>
+                      <div>📹 {route.statistics.total_cameras} cámaras · 🚦 {route.statistics.total_incidents} incidentes</div>
+                      <div>💰 Costo: {route.cost.toFixed(2)}</div>
+                    </div>
+                  </div>
+                )
+              })}
+              
+              <div style={{marginTop: 12, fontSize: 11, color: 'var(--muted)', fontStyle: 'italic'}}>
+                💡 Click en cada ruta para mostrar/ocultar en el mapa
+              </div>
+            </div>
+          )}
+
+          {stats && !comparing && (
+            <div className="group" style={{marginTop: 16, padding: 12, background: 'rgba(124,58,237,0.08)', borderRadius: 8, border: '1px solid rgba(124,58,237,0.2)'}}>
+              <label className="label">📊 Estadísticas de la ruta</label>
+              <div style={{fontSize: 13, lineHeight: 1.8, color: 'var(--text)'}}>
+                <div><strong>Distancia:</strong> {(stats.total_distance / 1000).toFixed(2)} km</div>
+                <div><strong>Riesgo promedio:</strong> {stats.avg_risk?.toFixed(3)}</div>
+                <div><strong>Cámaras:</strong> {stats.total_cameras} · <strong>Incidentes:</strong> {stats.total_incidents}</div>
+                <div><strong>Segmentos:</strong> {stats.num_segments}</div>
+              </div>
+            </div>
+          )}
+
+          <div className="hint">
+            💡 <strong>Tip:</strong> Arrastra los marcadores o haz click en el mapa para cambiar origen/destino. 
+            Mantén <kbd>Shift</kbd> al hacer click para cambiar el origen.
+          </div>
+        </aside>
+
+        <main className="map-area">
+          <div ref={mapContainerRef} className="map" />
+          {loading && (
+            <div style={{
+              position: 'absolute', 
+              right: 16, 
+              top: 16, 
+              background: 'rgba(11,16,32,0.85)', 
+              padding: '10px 16px', 
+              borderRadius: 10, 
+              border: '1px solid rgba(124,58,237,0.4)',
+              color: 'white',
+              fontSize: 14,
+              fontWeight: 500,
+              boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
+            }}>
+              ⏳ Calculando ruta...
+            </div>
+          )}
+        </main>
+      </div>
+    </div>
+  )
+}

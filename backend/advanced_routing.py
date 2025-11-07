@@ -3,6 +3,7 @@ SafePath - Algoritmos Avanzados de Ruteo (Backend)
 """
 from typing import Tuple, List, Dict
 import heapq
+import math
 
 import networkx as nx
 import numpy as np
@@ -21,7 +22,7 @@ class AdvancedRouter(SafePathRouter):
         self, origin: Tuple[float, float], destination: Tuple[float, float], optimization: str = "combined"
     ) -> Dict:
         print(f"\n{'=' * 60}")
-        print(f"ALGORITMO GREEDY - Optimización: {optimization}")
+        print(f"ALGORITMO GREEDY MEJORADO - Optimización: {optimization}")
         print(f"{'=' * 60}")
 
         start_node = self.find_nearest_node(origin[0], origin[1])
@@ -36,15 +37,37 @@ class AdvancedRouter(SafePathRouter):
         max_iterations = 10000
         iterations = 0
 
+        def distance_to_goal(node):
+            """Distancia euclidiana al destino en metros"""
+            dx = (node[0] - end_node[0]) * 111_000 * abs(math.cos(math.radians(node[1])))
+            dy = (node[1] - end_node[1]) * 111_000
+            return math.sqrt(dx**2 + dy**2)
+
         while current != end_node and iterations < max_iterations:
             neighbors = [
                 (n, self.G[current][n][weight_attr]) for n in self.G.neighbors(current) if n not in visited
             ]
+            
             if not neighbors:
-                print("✗ Greedy: No hay vecinos disponibles, sin ruta")
-                return None
-            next_node = min(neighbors, key=lambda x: x[1])[0]
-            edge_cost = self.G[current][next_node][weight_attr]
+                # Si no hay vecinos no visitados, intentar backtrack al último nodo con alternativas
+                if len(path) > 1:
+                    print(f"  ⚠ Sin vecinos en {current}, retrocediendo...")
+                    path.pop()
+                    current = path[-1]
+                    iterations += 1
+                    continue
+                else:
+                    print("✗ Greedy: No hay vecinos disponibles y no se puede retroceder")
+                    return None
+            
+            # Greedy mejorado: combinar costo local con heurística de distancia al objetivo
+            # Factor de peso: 70% costo de arista, 30% distancia al destino
+            def greedy_score(neighbor_info):
+                n, edge_cost = neighbor_info
+                dist_to_goal = distance_to_goal(n)
+                return 0.7 * edge_cost + 0.3 * (dist_to_goal / 1000)  # Normalizar distancia
+            
+            next_node, edge_cost = min(neighbors, key=greedy_score)
             path.append(next_node)
             visited.add(next_node)
             total_cost += edge_cost
@@ -52,7 +75,7 @@ class AdvancedRouter(SafePathRouter):
             iterations += 1
 
         if current != end_node:
-            print("✗ Greedy: No se alcanzó el destino")
+            print("✗ Greedy: No se alcanzó el destino después de máximas iteraciones")
             return None
 
         stats = self._calculate_route_stats(path)
