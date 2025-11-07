@@ -12,9 +12,9 @@ export const useRouting = () => {
   const [comparing, setComparing] = useState(false)
   const [comparisonResults, setComparisonResults] = useState([])
   const [visibleRoutes, setVisibleRoutes] = useState({
-    'astar': true,
+    'dijkstra': true,
     'greedy': true,
-    'dijkstra': true
+    'branch_and_bound': true
   })
 
   const calculateRoute = async (origin, destination, algorithm, optimization) => {
@@ -63,7 +63,7 @@ export const useRouting = () => {
         dest_lon: String(destination.lon),
         dest_lat: String(destination.lat),
         optimization: String(optimization),
-        algorithms: 'astar,greedy,dijkstra'
+        algorithms: 'dijkstra,greedy,branch_and_bound'
       })
       const response = await fetch(`${API_BASE}/compare?${qs.toString()}`)
 

@@ -54,7 +54,7 @@ async def compare_routes(
     dest_lon: float = Query(...),
     dest_lat: float = Query(...),
     optimization: str = Query("combined"),
-    algorithms: str = Query("astar,dijkstra,greedy"),  # Comma-separated list
+    algorithms: str = Query("dijkstra,greedy,branch_and_bound"),  # Comma-separated list
 ):
     """
     Compare multiple routing algorithms simultaneously.
@@ -106,22 +106,22 @@ async def compare_routes(
                     print(f"⚠ {algo} failed: {e_alg}")
                     result = None
 
-                # Fallback to A* if advanced algorithm fails
+                # Fallback to Dijkstra if advanced algorithm fails
                 if result is None:
                     try:
-                        print(f"⚠ {algo.upper()} no encontró ruta. Usando A* como fallback en /compare...")
+                        print(f"⚠ {algo.upper()} no encontró ruta. Usando Dijkstra como fallback en /compare...")
                         result = router.calculate_route(
                             (origin_lon, origin_lat),
                             (dest_lon, dest_lat),
                             optimization=optimization,
-                            algorithm="astar",
+                            algorithm="dijkstra",
                         )
                         if result:
-                            result["note"] = f"{algo.capitalize()} no encontró ruta. Se usó A* como alternativa."
+                            result["note"] = f"fallback: Dijkstra"
                             # Mantener el nombre original del algoritmo para asignación de colores/posiciones
                             result["algorithm"] = algo
                     except Exception as e_fb:
-                        print(f"✗ Fallback A* también falló para {algo}: {e_fb}")
+                        print(f"✗ Fallback Dijkstra también falló para {algo}: {e_fb}")
                         result = None
             else:
                 result = router.calculate_route(
@@ -199,23 +199,24 @@ async def compute_route(
             print(f"⚠ Algoritmo {algorithm} falló: {e}. Intentando con A* como fallback...")
             result = None
         
-        # Fallback to A* if advanced algorithm failed
+        # Fallback to Dijkstra if advanced algorithm failed
         if result is None:
-            print(f"⚠ {algorithm.upper()} no encontró ruta. Usando A* como fallback...")
+            print(f"⚠ {algorithm.upper()} no encontró ruta. Usando Dijkstra como fallback...")
             try:
                 result = router.calculate_route(
                     (origin_lon, origin_lat),
                     (dest_lon, dest_lat),
                     optimization=optimization,
-                    algorithm="astar",
+                    algorithm="dijkstra",
                 )
                 if result:
-                    result["algorithm"] = f"{algorithm}_fallback_astar"
-                    result["note"] = f"{algorithm.capitalize()} no encontró ruta. Se usó A* como alternativa."
+                    result["algorithm"] = f"{algorithm}_fallback_dijkstra"
+                    result["note"] = f"fallback: Dijkstra"
             except Exception as e2:
-                print(f"✗ Fallback A* también falló: {e2}")
+                print(f"✗ Fallback Dijkstra también falló: {e2}")
     else:
         # Standard algorithms (dijkstra, astar, bellman_ford)
+        # Dijkstra is the recommended default for best performance
         result = router.calculate_route(
             (origin_lon, origin_lat),
             (dest_lon, dest_lat),

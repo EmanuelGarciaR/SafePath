@@ -13,7 +13,7 @@ export default function App() {
   const [destination, setDestination] = useState({ lon: -75.5676, lat: 6.2528 })
   const [originSearch, setOriginSearch] = useState('')
   const [destSearch, setDestSearch] = useState('')
-  const [algorithm, setAlgorithm] = useState('astar')
+  const [algorithm, setAlgorithm] = useState('dijkstra')
   const [optimization, setOptimization] = useState('combined')
 
   // Custom hooks
@@ -96,7 +96,7 @@ export default function App() {
     const allCoordinates = []
 
     // Map fixed algorithm -> layer index for consistent colors
-    const algIndex = { astar: 0, greedy: 1, dijkstra: 2 }
+    const algIndex = { dijkstra: 0, greedy: 1, branch_and_bound: 2 }
 
     // First, clear and hide all compare sources
     const map = mapRef.current?.getMap()
@@ -139,7 +139,7 @@ export default function App() {
     routing.toggleRouteVisibility(algorithm)
     
     // Update map layer visibility
-    const index = ['astar', 'greedy', 'dijkstra'].indexOf(algorithm)
+    const index = ['dijkstra', 'greedy', 'branch_and_bound'].indexOf(algorithm)
     if (index !== -1) {
       const newVisibility = !routing.visibleRoutes[algorithm]
       

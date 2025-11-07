@@ -70,10 +70,10 @@ export const RouteControls = ({
         <select 
           value={algorithm} 
           onChange={(e) => onAlgorithmChange(e.target.value)}
+          title="Dijkstra es el más rápido y confiable para grafos de calles"
         >
-          <optgroup label="Clásicos">
-            <option value="dijkstra">Dijkstra</option>
-            <option value="astar">A* (A-Star)</option>
+          <optgroup label="Recomendados">
+            <option value="dijkstra">🏆 Dijkstra (Recomendado)</option>
             <option value="bellman_ford">Bellman-Ford</option>
           </optgroup>
           <optgroup label="Experimentales">
@@ -82,6 +82,9 @@ export const RouteControls = ({
             <option value="branch_and_bound">Branch & Bound</option>
           </optgroup>
         </select>
+        <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 4, fontStyle: 'italic' }}>
+          💡 Dijkstra garantiza la ruta óptima con mejor rendimiento
+        </div>
       </div>
 
       {/* Tipo de optimización */}

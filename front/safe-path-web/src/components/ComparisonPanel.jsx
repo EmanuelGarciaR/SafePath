@@ -6,12 +6,19 @@ export const ComparisonPanel = ({ results, visibleRoutes, onToggleVisibility }) 
 
   const colors = ['#7c3aed', '#10b981', '#f59e0b']
   const icons = {
-    'astar': '⚡',
+    'dijkstra': '🏆',
     'greedy': '🌱',
-    'dijkstra': '🎯',
+    'branch_and_bound': '🌳',
     'bellman_ford': '🔄',
-    'backtracking': '🔙',
-    'branch_and_bound': '🌳'
+    'backtracking': '🔙'
+  }
+
+  const names = {
+    'dijkstra': 'Dijkstra',
+    'greedy': 'Greedy',
+    'branch_and_bound': 'Branch & Bound',
+    'bellman_ford': 'Bellman-Ford',
+    'backtracking': 'Backtracking'
   }
 
   return (
@@ -60,7 +67,7 @@ export const ComparisonPanel = ({ results, visibleRoutes, onToggleVisibility }) 
                   border: '2px solid white'
                 }}/>
                 <strong>
-                  {icons[route.algorithm] || '🔹'} {route.algorithm.toUpperCase()}
+                  {icons[route.algorithm] || '🔹'} {names[route.algorithm] || route.algorithm.toUpperCase()}
                 </strong>
                 {route.note && (
                   <span style={{
